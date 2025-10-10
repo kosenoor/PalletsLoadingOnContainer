@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Loading Results</title>
+    <style>
+        body { font-family: Arial; margin: 20px; }
+        h2 { color: darkgreen; }
+        table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+        td, th { border: 1px solid #999; padding: 6px; text-align: center; }
+        img { max-width: 600px; margin: 10px; border: 1px solid #ccc; }
+    </style>
+</head>
+<body>
+    <h2>Loading Results</h2>
+
+    <h3>Loaded Pallets</h3>
+    <table>
+        <tr><th>Container</th><th>Pallet</th><th>Row</th><th>Col</th><th>Layer</th><th>Qty</th></tr>
+        {% for li in loaded %}
+        <tr>
+            <td>{{li.container_id}}</td>
+            <td>{{li.pallet_id}}</td>
+            <td>{{li.row}}</td>
+            <td>{{li.col}}</td>
+            <td>{{li.layer}}</td>
+            <td>{{li.qty_in_stack}}</td>
+        </tr>
+        {% endfor %}
+    </table>
+
+    <h3>Missed Pallets</h3>
+    <table>
+        <tr><th>Pallet</th><th>Remaining Qty</th></tr>
+        {% for pid,qty in missed.items() %}
+        <tr><td>{{pid}}</td><td>{{qty}}</td></tr>
+        {% endfor %}
+    </table>
+
+    <h3>Layout Images</h3>
+    {% for img in images %}
+        <img src="{{img}}">
+    {% endfor %}
+
+    
+    <br><a href="/">← Back</a>
+</body>
+</html>
+
