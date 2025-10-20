@@ -146,7 +146,7 @@ def draw_2d_all(loaded, containers, folder):
         for li in items:
             rect = Rectangle((li.x, li.y), li.l, li.w, edgecolor="black", facecolor=pallet_colors[li.pallet_id], alpha=0.8)
             ax.add_patch(rect)
-            ax.text(li.x+li.l/2, li.y+li.w/2, f"{li.pallet_id}\nx{li.qty_in_stack}", ha="center", va="center", fontsize=7, weight="bold")
+            ax.text(li.x+li.l/2, li.y+li.w/2, f"{li.pallet_id}-X{li.qty_in_stack}", ha="center", va="center", fontsize=7, weight="bold")
         legend_y = 0
         for pid, color in pallet_colors.items():
             ax.add_patch(Rectangle((c.l + 5, legend_y), 15, 15, facecolor=color, edgecolor="black"))
@@ -252,3 +252,4 @@ if __name__ == "__main__":
     def open_browser(): webbrowser.open_new("http://127.0.0.1:5001/")
     Timer(1, open_browser).start()
     app.run(debug=False, port=5001)
+
