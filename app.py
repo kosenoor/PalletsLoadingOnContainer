@@ -3,7 +3,7 @@ import pandas as pd
 from flask import Flask, render_template, request, redirect, url_for, send_file, jsonify, session
 from werkzeug.utils import secure_filename
 from dataclasses import dataclass
-from typing import List
+from typing import List, Dict
 from collections import defaultdict
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
@@ -86,10 +86,19 @@ def pack(containers:List[ContainerSpec], pallets:List[PalletSpec]):
     total_left=sum(missed.values())
     pallets_sorted=sorted(pallets,key=lambda p:-(p.l*p.w*p.h))
     container_instances=[]
+    # expand containers by their qty to create instances (e.g., C1-1, C1-2 ...)
+
+    # Expand containers in the same order as provided (no sorting)
     for c in containers:
-        for i in range(1,int(c.qty)+1):
-            container_instances.append((c,f"{c.id}-{i}"))
-    container_instances.sort(key=lambda x:-(x[0].l*x[0].w*x[0].h))
+        try:
+            qty_int = int(c.qty)
+        except:
+            qty_int = 1
+        for i in range(1, max(1, qty_int) + 1):
+            container_instances.append((c, f"{c.id}-{i}"))
+
+#    container_instances.sort(key=lambda x:-(x[0].l*x[0].w*x[0].h))
+
     for c,cid in container_instances:
         if total_left<=0: break
         free=[FreeBox(0,0,0,c.l,c.w,c.h)]
@@ -140,13 +149,24 @@ def draw_2d_all(loaded, containers, folder):
 
     for cid in ids:
         items = [li for li in loaded if li.container_id == cid]
-        c = next(cc for cc in containers if cid.startswith(cc.id))
+        # find container spec by matching id prefix (cid like "C1-1", spec id like "C1")
+        c = next((cc for cc in containers if cid.startswith(cc.id + "-")), None)
+
+        #c = next((cc for cc in containers if cid.startswith(cc.id)), None)
+        # safety fallback if not found
+        if c is None:
+            # create fallback container covering all items extents
+            max_x = max((it.x + it.l) for it in items)
+            max_y = max((it.y + it.w) for it in items)
+            c = ContainerSpec(id=cid.split('-')[0], l=max_x + 10, w=max_y + 10, h=0, qty=1, type="")
         fig, ax = plt.subplots(figsize=(12,6))
         ax.add_patch(Rectangle((0,0), c.l, c.w, linewidth=2, edgecolor="black", facecolor="none"))
         for li in items:
             rect = Rectangle((li.x, li.y), li.l, li.w, edgecolor="black", facecolor=pallet_colors[li.pallet_id], alpha=0.8)
             ax.add_patch(rect)
-            ax.text(li.x+li.l/2, li.y+li.w/2, f"{li.pallet_id}-X{li.qty_in_stack}", ha="center", va="center", fontsize=7, weight="bold")
+            # show pallet id and stacking qty (avoid overlap by putting text at center)
+            ax.text(li.x+li.l/2, li.y+li.w/2, f"{li.pallet_id}\nx{li.qty_in_stack}", ha="center", va="center", fontsize=7, weight="bold")
+        # legend to the right
         legend_y = 0
         for pid, color in pallet_colors.items():
             ax.add_patch(Rectangle((c.l + 5, legend_y), 15, 15, facecolor=color, edgecolor="black"))
@@ -164,6 +184,7 @@ def draw_2d_all(loaded, containers, folder):
     return files
 
 # ------------------ HARD CODED CONTAINERS ------------------
+# kept same structure but adding note: 'qty' will be filled from form/session
 containers_list = [
     {"id": "C1", "type": "40ft", "length": 1200, "width": 230, "height": 240},
     {"id": "C2", "type": "20ft", "length": 600,  "width": 230, "height": 240},
@@ -174,20 +195,70 @@ containers_list = [
 @app.route("/")
 def index():
     # Load previous selections from session
-    selected_container_ids = session.get("selected_containers", [])
+    container_quantities = session.get("container_quantities", {})  # dict id -> qty
+    selected_container_ids = [cid for cid,q in container_quantities.items() if int(q) > 0]
     pallets_data = session.get("pallets_data", [])
-    return render_template("index.html", containers=containers_list, selected_container_ids=selected_container_ids, pallets_data=pallets_data)
+    # pass containers list and container_quantities for template to render inputs
+    return render_template("index.html",
+                           containers=containers_list,
+                           container_quantities=container_quantities,
+                           selected_container_ids=selected_container_ids,
+                           pallets_data=pallets_data)
 
 @app.route("/run", methods=["POST"])
 def run():
+    # Try to accept different form patterns for container quantities:
+    # 1) checkbox named "container" and inputs named "container_qty_<ID>" or "qty_<ID>"
+    # 2) array inputs "container" and "container_qty[]" (matching order)
+    # 3) only "container_qty_<ID>" inputs (no checkboxes) - treat qty>0 as selected
+    form = request.form
+
+    # Extract all quantity inputs by pattern container_qty_<ID> or qty_<ID>
+    container_quantities: Dict[str,int] = {}
+    # First check pattern keys
+    for key in form.keys():
+        if key.startswith("container_qty_"):
+            cid = key.replace("container_qty_","")
+            try: container_quantities[cid] = int(form.get(key) or 0)
+            except: container_quantities[cid] = 0
+        elif key.startswith("qty_"):
+            cid = key.replace("qty_","")
+            if cid not in container_quantities:
+                try: container_quantities[cid] = int(form.get(key) or 0)
+                except: container_quantities[cid] = 0
+
+    # If user used array-style inputs: 'container' and 'container_qty[]'
     selected_container_ids = request.form.getlist("container")
-    if len(selected_container_ids) > 3:
-        selected_container_ids = selected_container_ids[:3]
+    qty_list = request.form.getlist("container_qty[]")
+    if selected_container_ids and qty_list and len(selected_container_ids) == len(qty_list):
+        for cid, q in zip(selected_container_ids, qty_list):
+            try: container_quantities[cid] = int(q)
+            except: container_quantities[cid] = container_quantities.get(cid, 0)
 
-    # Store in session
-    session["selected_containers"] = selected_container_ids
+    # If no explicit quantities provided but there are selected checkboxes without qty fields,
+    # default qty 1 for selected checkboxes
+    if not container_quantities and selected_container_ids:
+        for cid in selected_container_ids:
+            container_quantities[cid] = 1
 
-    # Extract pallets
+    # Also consider any container checkboxes with no qty fields selected via 'container' list
+    for cid in selected_container_ids:
+        if cid not in container_quantities:
+            container_quantities[cid] = 1
+
+    # Limit to max 3 container types (keeps previous behavior). If more types present, keep first 3 keys.
+    selected_types = [cid for cid,q in container_quantities.items() if int(q) > 0]
+    if len(selected_types) > 3:
+        # prune extras while preserving order of appearance in containers_list
+        order = [c["id"] for c in containers_list]
+        ordered_selected = sorted(selected_types, key=lambda x: order.index(x) if x in order else 999)
+        keep = set(ordered_selected[:3])
+        container_quantities = {k:v for k,v in container_quantities.items() if k in keep}
+
+    # Store in session for persistence
+    session["container_quantities"] = container_quantities
+
+    # Extract pallets (unchanged)
     pallets = []
     pallets_data = []
     pallet_ids = request.form.getlist("pallet_id[]")
@@ -209,12 +280,24 @@ def run():
     # Save pallets in session
     session["pallets_data"] = pallets_data
 
-    selected_containers = [
-        ContainerSpec(
-            id=c["id"], l=c["length"], w=c["width"], h=c["height"], qty=1, type=c["type"]
-        ) for c in containers_list if c["id"] in selected_container_ids
-    ]
+    # Build selected_containers (ContainerSpec instances) using quantities provided
+    selected_containers = []
+    for c in containers_list:
+        cid = c["id"]
+        qty = int(container_quantities.get(cid, 0))
+        if qty > 0:
+            selected_containers.append(
+                ContainerSpec(
+                    id=c["id"],
+                    l=c["length"],
+                    w=c["width"],
+                    h=c["height"],
+                    qty=qty,
+                    type=c.get("type","")
+                )
+            )
 
+    # Perform packing (pack handles ContainerSpec.qty by expanding instances)
     loaded, missed = pack(selected_containers, pallets)
     images = draw_2d_all(loaded, selected_containers, LAYOUT_IMAGE_DIR)
 
@@ -224,6 +307,7 @@ def run():
 def clear():
     session.pop("selected_containers", None)
     session.pop("pallets_data", None)
+    session.pop("container_quantities", None)
     return redirect(url_for("index"))
 
 @app.route("/import_excel", methods=["POST"])
@@ -252,4 +336,3 @@ if __name__ == "__main__":
     def open_browser(): webbrowser.open_new("http://127.0.0.1:5001/")
     Timer(1, open_browser).start()
     app.run(debug=False, port=5001)
-
